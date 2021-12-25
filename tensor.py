@@ -92,10 +92,10 @@ from tensorflow.keras import layers
 
 # model = tf.keras.Model(inputs=[input1,input2], outputs=predictions)
 
-# subclassing model 
+# subclassing model :自定义形式
 class MyModel(tf.keras.Model):
 
-    def __init__(self,num_classes=10):  # 定义model结构
+    def __init__(self,num_classes=10):  # 定义model结构,也可以放在build函数中
         super(MyModel, self).__init__(name='my_model')
         self.num_classes = num_classes
         self.dense_1 = layers.Dense(32,activation='relu')
