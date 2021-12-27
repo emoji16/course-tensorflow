@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
+a whole process of build a model by functional method+ compile+fit+evaluate+predict
 train model in keras:tf.keras.Model
 build+compile
 train-fit:callbacks-tf.keras.callbacks(ModelCheckpoint定期保存模型, EarlyStopping, TensorBoard, CSVLogger

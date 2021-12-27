@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
+# use subclass method to build a model + GradientTape INSTEAD OF model.fit
 利用GradientTape自动求导机制，自定义模型训练过程：
 准确讲是eager execution过程
 subclass model + GradientTape自定义compile+fit(epoch+batch+optimizer+loss+metric)

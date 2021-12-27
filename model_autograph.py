@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 '''
+autograph && ways to save/load models (see note for more)
 计算图三种构建方式：静态图-session，动态图-eager execution，AutoGraph-@tf.function装饰器
 静态计算图：程序编译执行的时候生成神经网络中的结构(C++)，再执行相关操作。允许编译器进行更多优化，难debug
 动态计算图：可以按照编写命令执行

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 
 '''
+outline:3 level3 of api & an example to build compile fit a model
+
 part1:tensor & basic operations
 tensor-tf.Variable, tf.rank, tf.shape, tf.constant, tf.zeros, tf.ones
 operations-tf.strings, tf.debugging, tf.dtypes, tf.math, tf.random, tf.feature_column
