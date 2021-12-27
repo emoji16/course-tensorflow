@@ -1,17 +1,14 @@
 # -*- coding: utf-8 -*-
 '''
-tf中自定义模型构建模式：session静态图，eager execution函数式
-eager execution为tf2.0特有
+利用GradientTape自动求导机制，自定义模型训练过程：
+准确讲是eager execution过程
+subclass model + GradientTape自定义compile+fit(epoch+batch+optimizer+loss+metric)
 
-subclass model + GradientType自定义compile+fit(epoch+batch+optimizer+loss+metric)
-
-自动求导机制：
 tf.GradientTape():persistent是否可以多次调用，watch_accessed_variables是否自动追踪可训练变量(一般True，不用手动watch)
 gradient(target被微分 sources变量:model.trainable_variables)
 optimizer.apply_gradients(zip) 更新梯度
 
-tf.data.Dataset.from_tensor_slices + 
-for epoch for step
+tf.data.Dataset.from_tensor_slices + for epoch,for step
 
 metric: result,reset_state
 '''
