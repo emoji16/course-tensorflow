@@ -48,7 +48,7 @@ print(myadd("hello ","Erin"))
 class DemoModule(tf.Module):
     def __init__(self, init_value= tf.constant(0.0), name=None):
         super(DemoModule, self).__init__(name=name)
-        with self.name_scope:  # == with tf.name_scope("demo_model")
+        with self.name_scope:  # == with tf.name_scope("demo_model") 便于在tensorboard中展示
             self.x = tf.Variable(init_value, dtype=tf.float32,trainable=True)
 
     @tf.function(input_signature=[tf.TensorSpec(shape=[],dtype=tf.float32, name='a')])
