@@ -3,28 +3,31 @@
    * mid level APIs: layers-related: tf.keras.layers API + tf.keras.layers API.Layer子类进行自定义
    * high level APIs: model-related: tf.keras.Model子类进行自定义
 
-3. whole process
+3. model part：whole process
+   
+   how to build graph: sesssion, eager execution, autograph(subclass + @tf.function修饰call)
+   
    * build ： 3 ways（sequential model， functional model， subclass model）
    * compile(loss, metrics, optimizer) ：2 ways (model.compile, GradientTape+train)
    * fit: 2 ways (model.fit, GradientTape+train+batch+epoch，可以按此分为keras模型与自定义模型)
    * evaluate: 2 ways (model.compile+model.evaluate, tf.keras.metrics)
    * predict: 2 ways (model.predict , subclass-model(x))
    * save/load model: 
-     * model.save_weights : weights only /checkpoints-- 需要model部分代码才能predict
+     * model.save_weights/model.load_weights : weights only /checkpoints-- 需要model部分代码才能predict
      
        load得到model可以直接predict
      
        * model.save_weights("adasd.h5") *# .h5格式*
        * model.save_weights('./checkpoints/mannul_checkpoint') # checkpoint格式
-    
-     * model.save: weights(if after fit), architecture, optimizer configuration # HDF5格式
+   
+     * model.save/tf.keras.models.load_model: weights(if after fit), architecture, optimizer configuration # HDF5格式
      
        load得到model可以直接predict
      
        * ( filepath, 可选save_format='tf'为pb)
        * (filename ,.h5)
      
-     * tf.saved_model.save: weights, architecture。常用语于部署
+     * tf.saved_model.save/load: weights, architecture。常用于部署
      
        由于load结果不是一个model,还要经过f = restored_saved_model.signatures["serving_default"]调用指定函数f进行predict(注意input要转换为tensor tf.constant)
      
@@ -33,6 +36,31 @@
        *  (model, filepath)
    * others
      * tf.keras.utils.plot_model
-     * print(model.summary())
+     * `print`(model.summary())
    
-4. how to build graph: sesssion, eager execution, autograph(subclass + @tf.function修饰call)
+3. layers：
+
+   * tf.keras.layers  api
+
+   * 自定义layer
+     * class MyLayer ： `__init__`, build, call, get_config(字典形式传入init中变量)
+
+       三种初始化参数方式:tf.random_normal_initializer 、self.add_weight()、build(inputshape):self.add_weight
+
+     * model.save需要变量初始化时指定名字w/b
+
+     * tf.keras.models.load_model 指定custom_objects
+
+4. loss:
+
+   * tf.keras.losses api
+   * 自定义loss
+     * 类实现：继承 tf.keras.losses.Loss：`__init__`,call
+     * 函数式实现：def f1 def f2 (y_true, y_pred) return loss return f2
+
+5. metrics：
+   * tf.keras.metrics api
+   * 自定义loss
+     - 类实现：__init__,update_state,reset_state,result
+     - 函数式实现
+
