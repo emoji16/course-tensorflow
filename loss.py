@@ -12,7 +12,8 @@ SparseCategoricalCrossentropy:0,1,2...
 类实现-继承tf.keras.losses.Loss基类 + __init__ call 
 函数实现-def f1 def f2 return f2
 
-实例：subclass model(keras model也可适配) + focal loss自定义loss 实现mnist手写数字识别
+实例：mnist手写数字识别
+subclass model(keras model也可适配) + focal loss自定义loss 实现mnist手写数字识别
 '''
 import tensorflow as tf
 

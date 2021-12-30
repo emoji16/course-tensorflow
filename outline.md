@@ -64,3 +64,11 @@
      - 类实现：__init__,update_state,reset_state,result
      - 函数式实现
 
+6. tensorboard
+
+   * keras.model.fit：训练过程写在callbacks参数列表里
+
+     自定义训练中：需要利用tf.summary
+
+   * cmd：tensorboard --logdir path查看
+

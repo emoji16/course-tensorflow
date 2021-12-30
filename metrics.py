@@ -57,5 +57,3 @@ print('Final result: ',s.result().numpy())
 m = tf.metrics.SparseCategoricalAccuracy()
 m.update_state(tf.constant([2,1]), tf.constant([[0.1,0.9,0.8],[0.05,0.95,0]]))
 print('Final result: ',m.result().numpy())
-
-# p2-应用于
