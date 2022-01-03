@@ -1,11 +1,11 @@
 1. basic concepts：
    * low level APIs: tensor & basic operations
-   * mid level APIs: layers-related: tf.keras.layers API + tf.keras.layers API.Layer子类进行自定义
+   * mid level APIs: layers-related: tf.keras.layers API + tf.keras.layers.Layer子类进行自定义
    * high level APIs: model-related: tf.keras.Model子类进行自定义
 
 3. model part：whole process
    
-   how to build graph: sesssion, eager execution, autograph(subclass + @tf.function修饰call)
+   how to build graph: sesssion, eager execution, autograph(subclass + @tf.function修饰call / @tf.function修饰train_step、test_step)
    
    * build ： 3 ways（sequential model， functional model， subclass model）
    * compile(loss, metrics, optimizer) ：2 ways (model.compile, GradientTape+train)
@@ -15,13 +15,11 @@
    * save/load model: 
      * model.save_weights/model.load_weights : weights only /checkpoints-- 需要model部分代码才能predict
      
-       load得到model可以直接predict
-     
        * model.save_weights("adasd.h5") *# .h5格式*
-       * model.save_weights('./checkpoints/mannul_checkpoint') # checkpoint格式
-   
+     * model.save_weights('./checkpoints/mannul_checkpoint') # checkpoint格式
+       
      * model.save/tf.keras.models.load_model: weights(if after fit), architecture, optimizer configuration # HDF5格式
-     
+   
        load得到model可以直接predict
      
        * ( filepath, 可选save_format='tf'为pb)
@@ -71,4 +69,12 @@
      自定义训练中：需要利用tf.summary
 
    * cmd：tensorboard --logdir path查看
+
+7. data:tf.data
+
+   * tf.data.DataSet
+   * tf.data.TFRecordDataset
+     * 写入tfrecords文件：定义tf.train.Feature, 定义tf.train.Example,examples.SerializeToString()序列化+tf.io.TFRecordWriter写入
+     * 读取tfrecords文件：定义features_description,利用tf.io.parse_io_single_example解码，使用map批量解码
+   * tf.data.TextLineDataset
 
