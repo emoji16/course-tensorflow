@@ -13,8 +13,16 @@ tf.data
             gen = img_gen.flow_from_directory(filepath)
             for (x,y) in gen:
                 yield(x,y)
-        ds = tf.data.Dataset.from_generator(Gen,output_types=,output_shapes=)
-    
+        ds = tf.data.Dataset.from_generator(Gen可调用对象,output_types=,output_shapes=)
+
+        使用：
+        可以定义class DataLoader(object):
+            def __init__():
+            def __call__():
+                def _generator():
+                    pass 
+                ds = tf.data.Dataset.from_generator(_generator,...)
+                return ds
     * p2-transform:结合tf.io,tf.image,tf.stack..
         ds.map(f)
         ds.shuffle(buffer_size)
