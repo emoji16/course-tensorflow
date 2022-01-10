@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 '''
+Practice: 利用word2vec预训练词向量 + lstm 进行新闻文本分类
+
 1. 文本表示方法
 基于one-hot/ bag-of-words：tf-idf , textRank -- 稀疏，未考虑多义、同义性
 topic model：LSA, pLSA, LDA -- 引入topic

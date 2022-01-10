@@ -36,23 +36,4 @@ decoders(input + encoder-results): self-attention(inputs-previous output+ positi
 长距离特征捕获能力(主谓语一致性检测等任务):RNN ~= transform > cnn
 综合语义抽取能力（BLEU机器翻译任务）:transform > rnn~= cnn
 并行计算能力：transform > cnn~= rnn
-
-实践：使用transformer进行机器翻译
-    * 数据准备
-        * src-data: https://data.statmt.org/news-commentary/v14/
-        * 使用tensorflow_datasets as tfds进行切割和序列化
-            tf.keras.preprocessing.text.Tokenizer
-            tf.keras.preprocessing.sequence.pad_sequences
-        * 每个句子(序列)前后加上开始、结束token
 '''
-import os
-import time
-import numpy as np
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-
-import tensorflow as tf
-import tensorflow_datasets as tfds
-import pandas as pd
-
-train = pd.

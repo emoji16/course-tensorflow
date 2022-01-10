@@ -3,7 +3,7 @@
    * mid level APIs: layers-related: tf.keras.layers API + tf.keras.layers.Layer子类进行自定义
    * high level APIs: model-related: tf.keras.Model子类进行自定义
 
-3. model part：whole process
+2. model part：whole process
    
    how to build graph: sesssion, eager execution, autograph(subclass + @tf.function修饰call / @tf.function修饰train_step、test_step)
    
