@@ -94,7 +94,7 @@ tf.data
             * s3 - 定义解码函数：_parse_example 用tf.io.parse_io_single_example 将example_stirng和feature_description结合
                 # 将TFRecord文件中每一个序列化example解码
                 def _parse_example(example_string):
-                    feature_dict = tf.io.parse_io_single_example(example_string, feature_description)
+                    feature_dict = tf.io.parse_single_example(example_string, feature_description)
                     # 进一步具体处理
                     feature_dict['image] = tf.io.decode_jpeg(feature_dict['image'])
                     feature_dict['image] = tf.image.resize(feature_dict['image'],[256,256]) / 255.0
