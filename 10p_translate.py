@@ -8,12 +8,29 @@
             tf.keras.preprocessing.sequence.pad_sequences
         * 每个句子序列化(jieba+nltk)+前后加上开始、结束token
         * 过滤长文本train_ds.filter.batch.shuffle.prefetch
-    * s2-手写model:transformer
-        * scaled dot product attention
+    * s2-手写transformer model
+    PART0-定义scaled dot product attention方法;封装mha-layer,ffn-layer';positional encoding计算;
+        * 定义attention k,q,v,mask计算func：scaled dot product attention
+            * 注意留multi-head维
+            * 注意mask两种用法
+                * padding mask:识别实际内容，盖住补0
+                * look ahead mask：decoder中不偷窥后面
+        * 定义multi-head attention类-sublayer(定义一个大layer类：QKV+ dense layer类实现)
+        * 定义ffn func-sublayer(d_model,dff稍大)
+        * 定义positional encoding function
+        * 定义mask：padding mask / look-forward mask function
+    PART1-encoder部分{embedding,[encoderLayer{mha{qkv,dense}, ffn}]}
+        * 组装encoderLayer类:mha + ffn (dropout + layernorm + resnet)
+        * 组装encoder类： embedding encoderLayer 
+    PART2-decoder部分{embedding,[decoderLayer{mha-self{qkv,dense},mha{qkv,dense}, ffn}]}
+        * 组装decoderLayer类：mha + encoder-decoder attention + ffn
+        * 组装decoder类： embedding decoderLayers
 
+       
 '''
 import os
 import io
+from re import I
 import time
 import numpy as np
 import matplotlib as mpl
@@ -22,8 +39,9 @@ import json
 
 import tensorflow as tf
 from tensorflow.python.data.ops.dataset_ops import AUTOTUNE
+from tensorflow.python.ops.control_flow_v2_toggles import output_all_intermediates
+from tensorflow.python.ops.gen_array_ops import InplaceSub
 from tensorflow.python.ops.gen_experimental_dataset_ops import experimental_assert_next_dataset
-import tensorflow_datasets as tfds
 import pandas as pd
 # print(tf.__version__) # 2.7.0
 
@@ -157,12 +175,225 @@ val_ds = val_examples.map(tf_encode)\
             .filter(filter_max_length)\
             .padded_batch(BATCH_SIZE,padded_shapes=([-1],[-1]))\
         
-en_batch, zh_batch = next(iter(train_ds))
-print("英文索引序列的batch")
-print(en_batch)
-print("中文索引序列的batch")
-print(zh_batch)
+# en_batch, zh_batch = next(iter(train_ds))
+# print("英文索引序列的batch")
+# print(en_batch)
+# print("中文索引序列的batch")
+# print(zh_batch)
 
 
-# s2:model:transformer
+# s2:model:transformer ()
 # s2 - p1 - scaled dot product attention: QKV + softmax * V
+def scaled_dot_product_attention(q,k,v,mask):
+    '''
+    args: seq_len_k == seq_len_v
+    q : shape == (...,seq_len_q, depth)  seq_len_q :即查询,长度对应一个句子序列
+    k : shape == (...,seq_len_k, depth)
+    v : shape == (...,seq_len_v, depth_v)
+    mask: (...,seq_len_q, seq_len_k)  # 作用于qk'
+
+    return:
+    attention_weights:(...,seq_len_q, seq_len_k) 理解：返回序列中每一个子词对序列k其他词的权重
+    output:(...,seq_len_q, depth) 理解：返回序列中每一个子词的新表示
+    '''
+    matmul_qk = tf.matmul(q,k,transpose_b = True)  # (...,seq_len_q, seq_len_k)
+    dk = tf.cast(tf.shape(k)[-1], tf.float32) # dk：seq_k序列的长度depth
+    scaled_attention_logits = matmul_qk / tf.math.sqrt(dk)
+
+    if mask is not None:
+        scaled_attention_logits += (mask * -1e9)  # 因为要softmax,所以极小已经接近0了
+
+    attention_weights = tf.nn.softmax(scaled_attention_logits, axis = -1) # (...,seq_len_q, seq_len_k)
+    output = tf.matmul(attention_weights,v)  # (...,seq_len_q, depth)
+    
+    return output, attention_weights
+
+# s2 - p2 - 搭建multi-head attention类-sublayer(定义一个大layer类+多个dense QKV layer类实现)
+    # d_model = num_heads * depth
+class MultiHeadAttention(tf.keras.layers.Layer):
+    def __init__(self, d_model, num_heads):
+        super(MultiHeadAttention, self).__init__()
+        self.num_heads= num_heads
+        self.d_model = d_model
+        assert d_model % self.num_heads == 0
+        self.depth = d_model // self.num_heads
+        
+        self.wq = tf.keras.layers.Dense(d_model)  # q,k,v是根据每一个x(word)input * d_model矩阵计算出来的出来的
+        self.wk = tf.keras.layers.Dense(d_model)  # 参数共享，wq,wk,wv
+        self.wv = tf.keras.layers.Dense(d_model)  # 所以q,k,v 尺寸batch_size
+        
+        self.dense = tf.keras.layers.Dense(d_model) # 针对multi-head返回的multi-V进行一层加权
+
+    def split_heads(self, x, batch_size):
+        x = tf.reshape(x, shape=(batch_size, -1, self.num_heads, self.depth))
+        return tf.transpose(x, perm = [0,2,1,3])  # (batch_size, num_heads, seq_len, depth)
+
+    def call(self, v, k, q, mask):
+        batch_size = tf.shape(q)[0]
+
+        q = self.wq(q) # (...,seq_len_q,d_model)
+        k = self.wk(k)
+        v = self.wv(v)
+
+        q = self.split_heads(q, batch_size)  # (..., num_heads, seq_len_q, depth)
+        k = self.split_heads(k, batch_size)  # (..., num_heads, seq_len_k, depth)
+        v = self.split_heads(v, batch_size)  # (..., num_heads, seq_len_v, depth)
+
+        scaled_attention, attention_weights = scaled_dot_product_attention(
+            q,k,v,mask
+        )
+
+        # scaled_attention : shape ==  (batch_size, num_heads, seq_len_q, depth)
+        # attention_weights : shape == (batch_size, num_heads, seq_len_q, seq_len_k)
+
+        scaled_attention = tf.transpose(scaled_attention, perm=[0,2,1,3])  # (batch_size, seq_len_q, num_heads, depth)
+        concat_attention = tf.reshape(scaled_attention, (batch_size, -1 , self.d_model)) # (batch_size, seq_len_q, d_model)
+
+        output = self.dense(concat_attention)
+
+        return output, attention_weights # (batch_size, seq_len_q, d_model), (batch_size, num_heads, seq_len_q, seq_len_k)
+
+# s2 - p3 - feed forward networks-sublayer
+# dff 常大于 d_model提取有用信息,论文中d_model ==512, dff == 2048
+def point_wise_feed_forward_network(d_model, dff):
+    return tf.keras.Sequential([  # 不止model可用sequential
+        tf.keras.layers.Dense(dff, activation='relu'),  # (batch_size, seq_len, dff),
+        tf.keras.layers.Dense(d_model)  # (batch_size, seq_len, d_model)
+    ])
+
+# s2 - p4 - 组装encoderLayer类-(mha+ffn+dropout+layer normalization+resnet)
+class EncoderLayer(tf.keras.layers.Layer):
+    def __init__(self, d_model, num_heads, dff ,rate = 0.1):
+        super(EncoderLayer, self).__init__()
+        self.mha = MultiHeadAttention(d_model, num_heads)
+        self.ffn = point_wise_feed_forward_network(d_model, dff)
+
+        self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+
+        self.dropout1 = tf.keras.layers.Dropout(rate)
+        self.dropout2 = tf.keras.layers.Dropout(rate)
+
+    def call(self, x, training, mask):
+        # 2 sublayers:mha ffn，每个子层后面还有dropout 和 layernorm+resnet
+        # sublayer1: mha
+        # 这里实现过程seq_len_k == seq_len_q, depth == depth_v
+        attn_output, attn =self.mha(x,x,x,mask)
+        attn_output = self.dropout1(attn_output,training = training)  # 非trainning可以不dropout
+        out1 = self.layernorm1(x + attn_output)  # resnet实现方式
+
+        # sublayer1: ffn
+        ffn_output = self.ffn(out1)
+        ffn_output = self.dropout2(ffn_output, training = training)
+        out2 = self.layernorm2(out1 + ffn_output)  # (batch_size, seq_len_q, d_model)
+
+# s2 - p5 -decoderLayer类
+# sublayers: self-attention + encoder-decoder-attention + ffn
+# self-attention sublayer: QKV 都是自己+ 需要look ahead mask
+# encoder-decoder attention sublayer：使用self-attention层输出序列作为Q k,v 使用encoder的输出序列
+# 理解：参考已经生成的(中文)字词为当前output产生一个包含前文语义的Q,与encoder中的(英文)序列匹配，
+class DecoderLayer(tf.keras.layers.Layer):
+    def __init__(self, d_model, num_heads, dff, rate = 0.1):
+        super(DecoderLayer, self).__init__()
+        self.mha1 = MultiHeadAttention(d_model, num_heads)
+        self.mha2 = MultiHeadAttention(d_model, num_heads)
+        self.ffn = point_wise_feed_forward_network(d_model, dff)
+
+        self.layernorm1 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+        self.layernorm3 = tf.keras.layers.LayerNormalization(epsilon=1e-6)
+
+        self.dropout1 = tf.keras.layers.Dropout(rate)
+        self.dropout2 = tf.keras.layers.Dropout(rate)
+        self.dropout3 = tf.keras.layers.Dropout(rate)
+
+    def call(self, x, enc_output, training, combined_mask, inp_padding_mask):
+        # sublayer1:
+        attn1, attn_weights_block1 = self.mha1 (x,x,x,combined_mask)
+        attn1 = self.dropout1(attn1, training= training)
+        out1 = self.layernorm1(attn1 + x)
+
+        # sublayer2:
+        attn2, attn_weights_block2 = self.mha2(
+            enc_output, enc_output, out1, inp_padding_mask
+        )
+        attn2 = self.dropout2(attn2, training = training)
+        out2 = self.layernorm2(attn2 + out1)
+
+        ffn_output = self.ffn(out2)
+        ffn_output = self.dropout23(ffn_output, training = training)
+        out3 = self.layernorm3(ffn_output + out2)
+
+        return out3, attn_weights_block1, attn_weights_block2
+
+# s2 - p6 - positional encoding :二维sin/con 表达位置信息; 与原线段进行相加
+# pe_fb:奇数sin,偶数cos
+def get_angles(pos, i ,d_model):  # 位置pos，index_in_vector=i的值
+    angle_rates = 1/np.power(10000, (2*(i//2)) / np.float32(d_model))
+    return pos * angle_rates
+
+def positional_encoding(position, d_model):
+    angle_rads = get_angles(np.arange(position)[:, np.newaxis],  # 转置成为矩阵
+                            np.arange(d_model)[np.newaxis, :],
+                            d_model)
+    pos_encoding = tf.zeros(tf.shape(position), d_model)
+    pos_encoding[:,0::2] = np.sin(angle_rads[:,0::2])
+    pos_encoding[:,1::2] = np.cos(angle_rads[:,1::2])
+    return tf.cast(pos_encoding, dtype = tf.float32) # shape == (seq_len , d_model)
+
+# s2- p7 - 组装encoder类：embedding + encoder_layers
+# input_vocab_size 固定序列长度： fixed seq_len
+class Encoder(tf.keras.layers.Layer):
+    def __init__(self, num_layers, d_model, num_heads, dff, input_vocab_size, rate=0.1):
+        super(Encoder, self).__init__()
+        self.d_model = d_model
+        self.embedding = tf.keras.layers.Embedding(input_vocab_size, self.d_model)
+        self.pos_encoding = positional_encoding(input_vocab_size, self.d_model)
+        self.enc_layers = [EncoderLayer(d_model, num_heads, dff, rate) for _ in range(num_layers)]
+
+        self.drop_out = tf.keras.layers.Dropout(rate)
+
+    def call(self, x, training, mask):
+        input_seq_len = tf.shape(x)[1]
+
+        x = self.embedding(x)
+        x *= tf.math.sqrt(tf.cast(self.d_model, tf.float32)) # 原文缩放参数
+        x += self.pos_encoding[:, :input_seq_len,:] # 注意：相加关系
+        x = self.dropout(x,training = training)
+
+        for i, enc_layer in enumerate(self.enc_layers):
+            x = enc_layer(x, training, mask)
+            print('-'*20)
+            print("EncoderLayer {i+1} output:", x)
+
+        return x
+
+# s2- p7 - 组装decoder类：embedding(目标语言) + decoder_layers
+class Decoder(tf.keras.layers.Layer):
+    def __init__(self, num_layers, d_model, num_heads, dff ,target_vocab_size,)
+
+
+    
+# s2 - p3 - padding mask : 索引序列中0的补位设为1
+# mask: padding mask+look ahead mask
+def create_padding_mask(seq):
+    mask = tf.cast(tf.equal(seq, 0), tf.float32)
+    return mask[:, tf.newaxis, tf.newaxis,:]  # broadcasting
+
+inp_mask = create_padding_mask(inp)
+
+
+# s2 - p - look-ahead mask 
+def create_look_ahead_mask(size):  # 上三角矩阵
+    mask = 1 - tf.linalg.band_part(tf.ones((size,size)),-1,0)  # 1-主对角线+整个下三角
+    return mask
+
+# seq_len = emb_tar.shape[1]
+# look_ahead_mask = create_look_ahead_mask(seq_len)
+
+# Q1-solved: 序列长度如何通知:input(batch_size,seq_len)
+# Q2?: mask维度?
+# Q3-solved：q每次传入？batch_size针对样本一个q--对每一个单词创建三个向量：word_embed * 训练矩阵得到
+# 训练的是Dense:wq,wk,wv,共享参数
+# Q4-solved：output1 进入wq(q) ; en_output传递进入wk(k),wv(v) 
+# Q5?:怎么解决decoder:target_vocab_len:如何传入当前?mask的时候按哪个遮挡?传入和生成len一定相同?
