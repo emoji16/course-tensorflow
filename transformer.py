@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 '''
-实践：使用transformer进行机器翻译
-    s2s过程-teaching fools策略：input + label-targetlanguage[:,:-1] -> 生成-targetlanguage[:,1:] 
-    注意前后加上了BOF-EOF
+S10 - 实践：使用transformer进行机器翻译
+    note:s2s-train 和 predict过程中decoder的self-attention层输入不同(注意前后都加上了BOF-EOF)
+    train过程-teaching fools策略：input + label-targetlanguage[:,:-1] -> 生成-targetlanguage[:,1:] 
+    predict过程-没有tar 且 model welltrained：直接用output作为decoder self-attention 的input
+    # train里面直接用这些predictions (seq_len个)作预测
+    # 从 seq_len 维度选择最后一个词.按词调用transformer
+    针对每个output词跑一遍transformer
     * s1-数据准备
         * src-data: https://data.statmt.org/news-commentary/v14/
         * 还是用tf.keras.preprocessing进行切割和字典的构建
@@ -29,27 +33,39 @@
         * 组装decoderLayer类：mha + encoder-decoder attention + ffn
         * 组装decoder类： embedding decoderLayers
     PART3-Transformer-model组装{encoder,decoder,linearLayer}
-    * s3 - train
-        * 定义loss 
+    * s3 - train 
+        * 定义loss_fn : 遮罩 + SparseCategoricalCrossentropy (reduction='none'-->丢弃pad空位上loss)
+        * 声明metrics 
+        * num_layers，d_model等hyperparameters
+        * tip：自定义Adam优化器learning_rate:定义schedule类
+        * 初始化transformer
+        * 定义针对每组input data create_masks方法
+        * 定义train_step
+            注意循环定义@tf.function的时候要声明
+            
+        * tip：利用checkpoint保存和加载模型:这样可以从中间继续
+            if ckpt_manager.latest_checkpoint:
+                ckpt.restore(ckpt_manager.latest_checkpoint)
+        * 定义训练过程：for epoch in range(EPOCHES)
 '''
 
-# key pnt：
-# Q1-solved: 序列长度如何通知:input(batch_size,seq_len)
-# Q2-solved: mask维度 batch*1*1*seq_len(0位置0)
-# 原因：broadcasting
-# import tensorflow as tf
-# a=tf.constant([[[1,1],[1,1]],[[1,1],[1,1]]]) # 2*2*2
-# print(tf.shape(a))
-# b = tf.constant([[-1,-1],[-1,-1]]) # 2,1,2
-# print(tf.shape(b))
-# print(a+b)
-# print(tf.shape(a+b))
-# Q3-solved：q每次传入？batch_size针对样本一个q--对每一个单词创建三个向量：word_embed * 训练矩阵QKV得到
-# 训练的是Dense:wq,wk,wv,共享参数
-# Q4-solved：output1 进入wq(q) ; en_output传递进入wk(k),wv(v) ，Q'K'V'还是得训练
-# Q5-solved: input_vocab_len, target_vocab_len均指定,指定的是序列值的区间，以供embedding使用
-#            qkv的参数由 embedding-x 决定，这里都用了序列长度seq_len
-# Q6-solved: look_ahead_mask 直接按照tar_seq_size对角矩阵即可完成
+'''问题与思考：
+Q1-solved: 序列长度如何通知:input(batch_size,seq_len)
+Q2-solved: mask维度 batch*1*1*seq_len(0位置0)
+原因：broadcasting
+import tensorflow as tf
+a=tf.constant([[[1,1],[1,1]],[[1,1],[1,1]]]) # 2*2*2
+print(tf.shape(a))
+b = tf.constant([[-1,-1],[-1,-1]]) # 2,1,2
+print(tf.shape(b))
+print(a+b)
+print(tf.shape(a+b))
+Q3-solved：q每次传入？batch_size针对样本一个q--对每一个单词创建三个向量：word_embed * 训练矩阵QKV得到
+训练的是Dense:wq,wk,wv,共享参数
+Q4-solved：output1 进入wq(q) ; en_output传递进入wk(k),wv(v) ，Q'K'V'还是得训练
+Q5-solved: input_vocab_len, target_vocab_len均指定,指定的是序列值的区间，以供embedding使用
+           qkv的参数由 embedding-x 决定，这里都用了序列长度seq_len
+Q6-solved: look_ahead_mask 直接按照tar_seq_size对角矩阵即可完成'''
 
 import os
 import io
@@ -191,9 +207,9 @@ BATCH_SIZE = 64
 BUFFER_SIZE = 15000
 train_ds = train_examples.map(tf_encode)\
             .filter(filter_max_length)\
-            .shuffle(BUFFER_SIZE)\
             .padded_batch(BATCH_SIZE,padded_shapes=([-1],[-1]))\
-            .prefetch(tf.data.experimental.AUTOTUNE)
+            # .shuffle(BUFFER_SIZE)\
+            # .prefetch(tf.data.experimental.AUTOTUNE)
 val_ds = val_examples.map(tf_encode)\
             .filter(filter_max_length)\
             .padded_batch(BATCH_SIZE,padded_shapes=([-1],[-1]))\
@@ -237,8 +253,8 @@ class MultiHeadAttention(tf.keras.layers.Layer):
         super(MultiHeadAttention, self).__init__()
         self.num_heads= num_heads
         self.d_model = d_model
-        assert d_model % self.num_heads == 0
-        self.depth = d_model // self.num_heads
+        assert self.d_model % self.num_heads == 0
+        self.depth = self.d_model // self.num_heads
         
         self.wq = tf.keras.layers.Dense(d_model)  # q,k,v是根据每一个x(word)input * d_model矩阵计算出来的出来的
         self.wk = tf.keras.layers.Dense(d_model)  # 参数共享，wq,wk,wv
@@ -359,10 +375,9 @@ def positional_encoding(position, d_model):
     angle_rads = get_angles(np.arange(position)[:, np.newaxis],  # 转置成为矩阵
                             np.arange(d_model)[np.newaxis, :],
                             d_model)
-    sines = np.sin(angle_rads[:,0::2])
-    cosines = np.cos(angle_rads[:,1::2])
-    pos_encoding = np.concatenate([sines,cosines],axis=-1)
-    pos_encoding = pos_encoding[np.newaxis, ...]
+    angle_rads[:,0::2] = np.sin(angle_rads[:,0::2])
+    angle_rads[:,1::2] = np.cos(angle_rads[:,1::2])
+    pos_encoding = angle_rads[np.newaxis, ...]
     return tf.cast(pos_encoding, dtype = tf.float32) # shape == (seq_len , d_model)
 
 # s2- p7 - 组装encoder类：embedding + encoder_layers
@@ -387,8 +402,8 @@ class Encoder(tf.keras.layers.Layer):
 
         for i, enc_layer in enumerate(self.enc_layers):
             x = enc_layer(x, training, mask)
-            print('-'*20)
-            print("EncoderLayer {i+1} output:", x)
+            # print('-'*20)
+            # print(f"EncoderLayer {i+1} output:{x}")
 
         return x
 
@@ -450,6 +465,174 @@ def create_look_ahead_mask(size):  # 上三角矩阵(target已有的size)
 
 # combined_mask = tf.maximum(tar_padding_mask, look_ahead_mask)
 
-# s3 - demo - test
+# s3 - train
+# s3- p1 - loss 注意*遮罩
+loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True, reduction='none')
+def loss_fn(real, pred):
+    mask = tf.math.logical_not(tf.math.equal(real,0)) # 这里指保留位
+    loss_ = loss_object(real, pred)
+    mask = tf.cast(mask,dtype = loss_.dtype)
+    loss_ *= mask
+    return tf.reduce_mean(loss_)
 
-# s4 - train
+train_loss = tf.keras.metrics.Mean(name='train_loss')
+
+# s3- p2 - metrics
+# metrics：accuracy这里先不设置遮罩
+train_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(name='train_accuracy')
+
+# s3 -p3 -hyper-parameters
+num_layers = 2
+d_model = 4
+dff = 8
+num_heads = 2
+vocab_size_en = en_vocab_size + 2 + 1
+vocab_size_zh = zh_vocab_size + 2 + 1
+
+# s3 - p4 - 自定义优化器Adam learning_rate : tf.keras.optimizers.schedules.LearningRateSchedule
+# tf.keras.optimizers.schedules.LearningRateSchedule
+class CustomSchedule(tf.keras.optimizers.schedules.LearningRateSchedule) : 
+    def __init__(self, d_model, warmup_steps=4000):
+        super(CustomSchedule, self).__init__()
+        self.d_model = d_model
+        self.d_model = tf.cast(d_model, tf.float32)
+        self.warmup_steps = warmup_steps
+
+    def __call__(self, step):
+        arg1 = tf.math.rsqrt(step)
+        arg2 = step * (self.warmup_steps ** -1.5)
+        return tf.math.rsqrt(self.d_model) * tf.math.minimum(arg1, arg2)
+
+learning_rate = CustomSchedule(d_model)
+optimizer = tf.keras.optimizers.Adam(learning_rate, beta_1=0.9, beta_2=0.98)
+
+# s3 - p5 - 初始化model
+transformer = Transformer(num_layers, d_model, num_heads , dff,vocab_size_en,vocab_size_zh)
+
+# s3 - p6 -create_mask方法
+def create_masks(inp, tar):
+    enc_padding_mask = create_padding_mask(inp)
+    dec_padding_mask = create_padding_mask(inp)
+    look_ahead_mask = create_look_ahead_mask(tf.shape(tar)[1])
+    dec_target_padding_mask = create_padding_mask(tar)
+    combined_mask = tf.maximum(look_ahead_mask, dec_target_padding_mask)
+    return enc_padding_mask, combined_mask, dec_padding_mask
+
+# s3 - p7 - train_step方法
+# 
+# 为了避免由于可变序列长度或可变批次大小（最后一批次较小）导致的再追踪，使用 input_signature 指定
+# 更多的通用形状。
+train_step_signature = [
+    tf.TensorSpec(shape=(None, None), dtype=tf.int64),
+    tf.TensorSpec(shape=(None, None), dtype=tf.int64),
+]
+
+@tf.function(input_signature=train_step_signature)
+def train_step(inp , tar):
+    tar_inp = tar[:, :-1]
+    tar_real = tar[:, 1:]  
+
+    enc_padding_mask, combined_mask, dec_padding_mask = create_masks(inp, tar_inp)
+
+    with tf.GradientTape() as tape:
+        predictions, _ = transformer(inp, tar_inp, True, enc_padding_mask, combined_mask, dec_padding_mask)
+        loss = loss_fn(tar_real, predictions)
+
+    gradients = tape.gradient(loss, transformer.trainable_variables)
+    optimizer.apply_gradients(zip(gradients,transformer.trainable_variables))
+
+    train_loss(loss)
+    train_accuracy(tar_real, predictions)
+
+# s3 - p8 - checkpoint保存--设定参数保存名称
+# tf.train.Checkpoint, tf.train.CheckpointManager
+# 
+run_id = f"{num_layers}layers_{d_model}d_{num_heads}heads_{dff}dff"
+checkpoint_path = './checkpoints/'
+log_path = './logs/'
+checkpoint_path = os.path.join(checkpoint_path, run_id)
+log_path = os.path.join(log_path, run_id)
+
+ckpt = tf.train.Checkpoint(transformer = transformer, optimizer = optimizer)
+ckpt_manager = tf.train.CheckpointManager(ckpt, checkpoint_path, max_to_keep=5)
+
+# s3 - p10 - epochs训练过程
+EPOCHS = 30
+save_epoch = 5
+last_epoch = 0
+
+if ckpt_manager.latest_checkpoint:
+    ckpt.restore(ckpt_manager.latest_checkpoint)
+    last_epoch = int(ckpt_manager.latest_checkpoint.split('-')[-1])
+    print(f"恢复至{last_epoch+1} EPOCHS处")
+else :
+    print("没有checkpoint记录")
+TRAIN = False
+if TRAIN :
+    summary_writer = tf.summary.create_file_writer(log_path)
+    for epoch in range(last_epoch, EPOCHS):
+        start_time = time.time()
+        train_loss.reset_states()
+        train_accuracy.reset_states()
+
+        for step,(inp,tar) in enumerate(train_ds):
+            train_step(inp, tar)
+                
+        if (epoch+1)% save_epoch == 0:
+            ckpt_save_path = ckpt_manager.save()
+            print(f"Save checkpoint for epoch {epoch+1} at {ckpt_save_path} ")
+
+        with summary_writer.as_default():
+            tf.summary.scalar("train_loss", train_loss.result(), step = epoch+1)
+            tf.summary.scalar("train_acc", train_accuracy.result(), step = epoch+1)
+        
+        print(f"Epoch {epoch+1}: Loss {train_loss.result()}, Accuracy {train_accuracy.result()}")
+        print(f"Took {time.time()-start_time} secs.")
+
+# s4 - evaluate-translate
+# decoder层self-attention输入为output
+# 按output seq长度调用transformer
+def evaluate(inp_sentence):
+    inp_sentence =  [en_vocab_size+1] + tokenizer_en.texts_to_sequences([content_cut_en(inp_sentence)])[0] + [en_vocab_size+2]
+    encoder_input = tf.expand_dims(inp_sentence, 0)
+
+    decoder_input = [zh_vocab_size+1]
+    output = tf.expand_dims(decoder_input, 0)
+
+    for i in range(MAX_LENGTH):
+        enc_padding_mask, combined_mask, dec_padding_mask = create_masks(
+            encoder_input, output)
+
+        # predictions.shape == (batch_size, seq_len, vocab_size)
+        predictions, attention_weights = transformer(encoder_input, 
+                                                    output,
+                                                    False,
+                                                    enc_padding_mask,
+                                                    combined_mask,
+                                                    dec_padding_mask)
+
+        # train里面直接用这些predictions (seq_len个)作预测
+        # 从 seq_len 维度选择最后一个词.按词调用transformer
+        predictions = predictions[: ,-1:, :]  # (batch_size, 1, vocab_size)
+
+        predicted_id = tf.cast(tf.argmax(predictions, axis=-1), tf.int32)
+
+        # 如果 predicted_id 等于结束标记，就返回结果
+        if predicted_id == zh_vocab_size + 2:
+            return tf.squeeze(output, axis=0), attention_weights
+
+        # 连接 predicted_id 与输出，作为解码器的输入传递到解码器。
+        output = tf.concat([output, predicted_id], axis=-1)
+
+        return tf.squeeze(output, axis=0), attention_weights
+
+def translate(sentence):
+  result, attention_weights = evaluate(sentence)
+
+  predicted_sentence_id = [i for i in result if i <= vocab_size_zh]
+  # TODO:反向读取json保存反向词典-word_index
+
+  print('Input: {}'.format(sentence))
+  print('Predicted translation: {}'.format(predicted_sentence_id))
+
+translate("China has enjoyed continuing economic growth.")
