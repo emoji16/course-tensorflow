@@ -170,6 +170,7 @@ if not os.path.exists(output_dir):
 
     tokenizer_zh = tf.keras.preprocessing.text.Tokenizer(num_words=zh_vocab_size,lower=False,filters="")
     tokenizer_zh.fit_on_texts([content_cut_zh(zh.numpy().decode('utf-8')) for _, zh in train_examples])
+    # print(tokenizer_zh.word_index)
     tokenizer_zh_json = tokenizer_zh.to_json()
     with io.open(zh_vocab_file,'w') as f:
         f.write(json.dumps(tokenizer_zh_json, ensure_ascii=False))
@@ -636,3 +637,6 @@ def translate(sentence):
   print('Predicted translation: {}'.format(predicted_sentence_id))
 
 translate("China has enjoyed continuing economic growth.")
+
+btr = b"\u5e02\u573a\u4efd\u989d"
+print(btr.decode())
