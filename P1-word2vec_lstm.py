@@ -270,5 +270,9 @@ test_true = list(np.argmax(test_label,axis=1))
 print(accuracy_score(test_true, predictions))
 
 print(classification_report(test_true, predictions,target_names=list(lb.classes_)))
-    
 
+# 模型保存与查看
+# 使用saved_model_cli
+# saved_model_cli show --dir ./saved_models/text_classification/1 --all
+# test: saved_model_cli run --dir ./saved_models/text_classification/1/ --tag_set serve --signature_def serving_default --input_exprs "input_1=np.ones((1,800))"
+tf.saved_model.save(model, './saved_models/text_classification/1/')
