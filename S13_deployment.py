@@ -1,9 +1,8 @@
 # -*- coding: utf-8 -*-
 '''
-
 docker + tf.serving部署model到服务器上
 docker run / docker stop / 
-测试：curl /requests.post / flask使用
+测试：curl /requests.post / 使用flask中间件双层request补充数据处理步骤
 
 * 生态：
 tensorflow serving
@@ -71,17 +70,43 @@ docker
 # 部署测试2：requests.post
 import json, requests
 
-requests.adapters.DEFAULT_RETRIES = 5
-a = [1.0, 2.0, 3.0]
-data = json.dumps({"signature_name":"serving_default", "instances":[a]})
-headers = {"content-type": "application/json","Connection":"close"}
-json_response = requests.post('http://114.116.50.39:8501/v1/models/half_plus_two:predict', data = data, headers=headers)
-predictions = json.loads(json_response.text)
-print(predictions)
+# requests.adapters.DEFAULT_RETRIES = 5
+# a = [1.0, 2.0, 3.0]
+# data = json.dumps({"signature_name":"serving_default", "instances":[a]})
+# headers = {"content-type": "application/json","Connection":"close"}
+# json_response = requests.post('http://114.116.50.39:8501/v1/models/half_plus_two:predict', data = data, headers=headers)
+# predictions = json.loads(json_response.text)
+# print(predictions)
 
-# 部署测试3：+ flask 中间件做数据处理
+# 部署测试3: 用flask 中间件做数据处理
 from flask import Flask, request
 import pickle
 
 app = Flask(__name__)
 
+@app.route('/cls',methods=['POST'])  # 客户端路径
+def test():
+    sentence = json.loads(request.get_data())
+    sentence = sentence['numbers']
+    sentence = sentence + [1,1,1]
+    print(sentence)
+    input_data = json.dumps({
+        'signature_def':'serving_default',
+        'instances':[sentence]#[{'contents':sentence}]
+    })
+    server_url = 'http://114.116.50.39:8501/v1/models/half_plus_two:predict'
+    response = requests.post(server_url, data = input_data)
+    response = json.loads(response.text)
+    return response
+
+app.run('0.0.0.0',port=5000,debug=True)  # 封装了一个端口进行补充处理,双层request
+
+
+# test
+import numpy as np
+a = [1,2,3]
+b = [1,2,3]
+c = [1.0,2.0,3.0]
+print(a+c)  # concatenate
+print(a+b)  # concatenate
+print(np.add(a,b))  # broadcasting
