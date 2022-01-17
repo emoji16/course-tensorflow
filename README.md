@@ -77,4 +77,19 @@
      * 写入tfrecords文件：定义tf.train.Feature, 定义tf.train.Example,examples.SerializeToString()序列化+tf.io.TFRecordWriter写入
      * 读取tfrecords文件：定义features_description,利用tf.io.parse_io_single_example解码，使用map批量解码
    * tf.data.TextLineDataset
+   
+8. cnn
 
+9. rnn + project: word2vec_lstm 新闻分类实践
+
+10. transformer 
+
+11. 分布式训练tf.distributed.Strategy:gpu tpu 
+
+12. tf.hub + project: 获取预训练bert 相似问题判断
+
+13. deployment : docker + tf.serving. 三种测试-curl，requests.post,+flask中间件
+
+
+
+  
